@@ -1,0 +1,32 @@
+{
+  "rules": {
+    "activeSessionId": {
+      ".read": true,
+      ".write": true
+    },
+    "questionBank": {
+      ".read": true,
+      ".write": true
+    },
+    "joinCodes": {
+      ".read": true,
+      ".write": true
+    },
+    "sessions": {
+      ".read": true,
+      "$sessionId": {
+        ".write": true,
+        "players": {
+          "$playerId": {
+            ".write": true,
+            "answers": {
+              "$questionId": {
+                ".write": true
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

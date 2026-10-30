@@ -1,0 +1,273 @@
+import type { Question } from '../types/game';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AOU ICPC Orientation Day — Quiz Questions
+// Update questions marked [PLACEHOLDER] with verified AOU ICPC facts.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const QUESTIONS: Question[] = [
+  {
+    id: 'q1',
+    text: 'What does ICPC stand for?',
+    options: [
+      'International Collegiate Programming Contest',
+      'International Computer Programming Competition',
+      'Inter-Collegiate Problem-solving Championship',
+      'International Code and Programming Council',
+    ],
+    correctIndex: 0,
+    timeLimit: 20,
+    category: 'About ICPC',
+  },
+  {
+    id: 'q2',
+    text: 'What university does AOU ICPC Community represent?',
+    options: [
+      'Arab International University',
+      'Arab Open University',
+      'American Open University',
+      'Applied Open University',
+    ],
+    correctIndex: 1,
+    timeLimit: 15,
+    category: 'About Us',
+  },
+  {
+    id: 'q3',
+    text: 'What is the AOU ICPC Community\'s motto shown on the official logo?',
+    options: [
+      'Code. Compete. Conquer.',
+      'Think. Build. Win.',
+      'Problem Solving',
+      'Algorithms & Glory',
+    ],
+    correctIndex: 2,
+    timeLimit: 20,
+    category: 'About Us',
+  },
+  {
+    id: 'q4',
+    text: 'Which programming language is most commonly used in ICPC competitions?',
+    options: [
+      'Java',
+      'Python',
+      'C++',
+      'JavaScript',
+    ],
+    correctIndex: 2,
+    timeLimit: 20,
+    category: 'ICPC Knowledge',
+  },
+  {
+    id: 'q5',
+    text: 'How many team members are allowed per team in the ICPC World Finals?',
+    options: [
+      '2',
+      '3',
+      '4',
+      '5',
+    ],
+    correctIndex: 1,
+    timeLimit: 20,
+    category: 'ICPC Knowledge',
+  },
+  {
+    id: 'q6',
+    text: 'In Big-O notation, what is the time complexity of binary search?',
+    options: [
+      'O(n)',
+      'O(n²)',
+      'O(log n)',
+      'O(n log n)',
+    ],
+    correctIndex: 2,
+    timeLimit: 25,
+    category: 'Algorithms',
+  },
+  {
+    id: 'q7',
+    text: 'Which data structure operates on a "Last In, First Out" (LIFO) principle?',
+    options: [
+      'Queue',
+      'Stack',
+      'Heap',
+      'Linked List',
+    ],
+    correctIndex: 1,
+    timeLimit: 20,
+    category: 'Data Structures',
+  },
+  {
+    id: 'q8',
+    text: 'What is the output of: print(2 ** 10) in Python?',
+    options: [
+      '20',
+      '100',
+      '512',
+      '1024',
+    ],
+    correctIndex: 3,
+    timeLimit: 20,
+    category: 'Programming',
+  },
+  {
+    id: 'q9',
+    text: 'Which sorting algorithm has O(n log n) average-case time complexity?',
+    options: [
+      'Bubble Sort',
+      'Insertion Sort',
+      'Merge Sort',
+      'Selection Sort',
+    ],
+    correctIndex: 2,
+    timeLimit: 25,
+    category: 'Algorithms',
+  },
+  {
+    id: 'q10',
+    text: 'What is the maximum number of nodes in a binary tree of height h?',
+    options: [
+      '2h',
+      '2h − 1',
+      '2^h − 1',
+      '2^(h+1) − 1',
+    ],
+    correctIndex: 3,
+    timeLimit: 30,
+    category: 'Data Structures',
+  },
+  {
+    id: 'q11',
+    text: '[PLACEHOLDER] In which year was the AOU ICPC Community founded?',
+    options: [
+      '2018',
+      '2019',
+      '2020',
+      '2021',
+    ],
+    correctIndex: 1,
+    timeLimit: 20,
+    category: 'About Us',
+  },
+  {
+    id: 'q12',
+    text: 'Which traversal visits nodes in "Left → Root → Right" order?',
+    options: [
+      'Pre-order',
+      'Post-order',
+      'In-order',
+      'Level-order',
+    ],
+    correctIndex: 2,
+    timeLimit: 20,
+    category: 'Data Structures',
+  },
+  {
+    id: 'q13',
+    text: 'What does DFS stand for in graph algorithms?',
+    options: [
+      'Direct File Search',
+      'Depth-First Search',
+      'Dynamic Function Stack',
+      'Directed Flow System',
+    ],
+    correctIndex: 1,
+    timeLimit: 20,
+    category: 'Algorithms',
+  },
+  {
+    id: 'q14',
+    text: 'Which problem is NOT NP-Complete?',
+    options: [
+      'Travelling Salesman Problem',
+      'Subset Sum',
+      'Binary Search',
+      '3-SAT',
+    ],
+    correctIndex: 2,
+    timeLimit: 30,
+    category: 'Theory',
+  },
+  {
+    id: 'q15',
+    text: 'In C++, which STL container gives O(1) average lookup by key?',
+    options: [
+      'std::set',
+      'std::map',
+      'std::unordered_map',
+      'std::vector',
+    ],
+    correctIndex: 2,
+    timeLimit: 25,
+    category: 'Programming',
+  },
+  {
+    id: 'q16',
+    text: '[PLACEHOLDER] How many students are currently in the AOU ICPC Community?',
+    options: [
+      'Less than 50',
+      '50–100',
+      '100–200',
+      'More than 200',
+    ],
+    correctIndex: 2,
+    timeLimit: 20,
+    category: 'About Us',
+  },
+  {
+    id: 'q17',
+    text: 'What is the Fibonacci sequence starting from F(0)?',
+    options: [
+      '0, 1, 1, 2, 3, 5, 8 …',
+      '1, 1, 2, 3, 5, 8, 13 …',
+      '0, 1, 2, 3, 5, 8, 13 …',
+      '1, 2, 3, 5, 8, 13, 21 …',
+    ],
+    correctIndex: 0,
+    timeLimit: 25,
+    category: 'Mathematics',
+  },
+  {
+    id: 'q18',
+    text: 'Which algorithm finds the shortest path in a weighted graph with non-negative edges?',
+    options: [
+      'BFS',
+      'DFS',
+      'Dijkstra\'s Algorithm',
+      'Bellman-Ford',
+    ],
+    correctIndex: 2,
+    timeLimit: 25,
+    category: 'Algorithms',
+  },
+  {
+    id: 'q19',
+    text: '[PLACEHOLDER] Which AOU ICPC team placed highest in the 2024-2025 regional competition?',
+    options: [
+      'Team Alpha',
+      'Team Omega',
+      'Team Sigma',
+      'Team Delta',
+    ],
+    correctIndex: 0,
+    timeLimit: 20,
+    category: 'About Us',
+  },
+  {
+    id: 'q20',
+    text: 'What is the time complexity of Dijkstra\'s algorithm using a binary heap?',
+    options: [
+      'O(V²)',
+      'O(E log V)',
+      'O(V log E)',
+      'O(E + V)',
+    ],
+    correctIndex: 1,
+    timeLimit: 30,
+    category: 'Algorithms',
+  },
+];
+
+export const MAX_POINTS_PER_QUESTION = 1000;
+export const SPEED_BONUS_MAX = 500;
+
