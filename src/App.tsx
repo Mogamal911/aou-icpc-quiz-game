@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AdminDashboard } from './components/admin/AdminDashboard';
 import { QuestionManagementPage } from './pages/QuestionManagementPage';
+import { ContestHistoryPage } from './pages/ContestHistoryPage';
 import { PlayerPage } from './pages/PlayerPage';
 import { PresentationScreen } from './components/presentation/PresentationScreen';
 
@@ -15,6 +16,8 @@ export default function App() {
         <Route path="/admin" element={<AdminDashboard />} />
         {/* Question Management dedicated page */}
         <Route path="/admin/questions" element={<QuestionManagementPage />} />
+        <Route path="/admin/history" element={<ContestHistoryPage />} />
+        <Route path="/admin/history/:contestId" element={<ContestHistoryPage />} />
         {/* Projector / presentation screen */}
         <Route path="/present" element={<PresentationScreen />} />
         {/* Default: redirect to join */}

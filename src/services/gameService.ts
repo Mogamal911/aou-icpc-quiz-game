@@ -1,9 +1,12 @@
-import { ref, set, update, get, push, onValue, serverTimestamp } from 'firebase/database';
+import { ref, set, get, push, onValue, serverTimestamp, runTransaction } from 'firebase/database';
 import { db } from '../firebase/firebase';
 import { isFirebaseConfigured } from '../firebase/config';
-import type { GameSession, Player, PlayerAnswer, GamePhase } from '../types/game';
-import { QUESTIONS, MAX_POINTS_PER_QUESTION, SPEED_BONUS_MAX } from '../data/questions';
-import { getQuestionBank } from './questionBankService';
+import type { GameSession, Player, PlayerAnswer, Question } from '../types/game';
+import { addContestPlayer, normalizeNickname, renameContestPlayer, removeContestPlayer } from '../utils/playerManagement';
+import { ANSWER_GRACE_MS, revealQuestion } from '../utils/scoring';
+import { finishContest } from '../utils/contestHistory';
+import { getServerTime, observeServerClock } from './clockService';
+import { getQuestionBank, normalizeQuestion, validateQuestion } from './questionBankService';
 
 // ─── Local Storage & Broadcast Channel Backup ─────────────────────────────────
 let localBus: BroadcastChannel | null = null;
@@ -74,9 +77,15 @@ export async function getActiveSessionId(): Promise<string | null> {
   return localStorage.getItem('aou_active_session_id') || null;
 }
 
-export async function createGameSession(): Promise<string> {
+export async function createGameSession(selectedQuestions?: Question[]): Promise<string> {
   const joinCode = generateJoinCode();
-  const questionsSnapshot = await getQuestionBank();
+  const chosen = selectedQuestions ?? await getQuestionBank();
+  if (!chosen.length) throw new Error('Choose at least one question before creating a contest.');
+  for (const question of chosen) {
+    const result = validateQuestion(question);
+    if (!result.isValid) throw new Error(result.errors.join(' '));
+  }
+  const questionsSnapshot = chosen.map((question, index) => normalizeQuestion(question, index));
   const initialDuration = questionsSnapshot[0]?.timeLimit || 20;
 
   if (isFirebaseConfigured) {
@@ -127,12 +136,14 @@ export async function createGameSession(): Promise<string> {
     joinCode,
   };
 
-  fetch('/api/quiz/session', {
+  const response = await withTimeout(fetch('/api/quiz/session', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, session, joinCode }),
-  }).catch((err) => console.warn('Dev sync server unreachable:', err));
+  }), 5000, 'Could not create the lobby. Check the local server and try again.');
+  if (!response.ok) throw new Error('Could not create the lobby. Please try again.');
 
+  localStorage.setItem('aou_active_session_id', sessionId);
   localStorage.setItem(`aou_joincode_${joinCode}`, sessionId);
   saveLocalSession(sessionId, session);
   return sessionId;
@@ -170,7 +181,7 @@ export async function joinSession(
   sessionId: string,
   nickname: string
 ): Promise<string> {
-  const cleanNickname = nickname.trim();
+  const cleanNickname = normalizeNickname(nickname);
 
   if (isFirebaseConfigured) {
     const playerRef = push(ref(db, `sessions/${sessionId}/players`));
@@ -184,44 +195,18 @@ export async function joinSession(
       isConnected: true,
     };
 
-    await withTimeout(set(playerRef, player), 4000, 'Failed to join game in Firebase');
+    await changeFirebaseSession(sessionId, (session) => addContestPlayer(session, { ...player, id: playerId }));
     return playerId;
   }
 
-  // Server-backed sync
-  try {
-    const res = await fetch('/api/quiz/join', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, nickname: cleanNickname }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return data.playerId;
-    }
-  } catch (err) {
-    console.warn('Server join failed, falling back to local storage:', err);
-  }
-
-  // Local fallback
-  const session = getLocalSession(sessionId);
-  if (!session) throw new Error('Game session not found. Please verify the join code.');
-
-  const playerId = 'player_' + Math.random().toString(36).substring(2, 9);
-  const player: Player = {
-    id: playerId,
-    nickname: cleanNickname,
-    joinedAt: Date.now(),
-    score: 0,
-    answers: {},
-    isConnected: true,
-  };
-
-  if (!session.players) session.players = {};
-  session.players[playerId] = player;
-  saveLocalSession(sessionId, session);
-  return playerId;
+  const response = await withTimeout(fetch('/api/quiz/join', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, nickname: cleanNickname }),
+  }), 5000, 'Could not join. Check your connection and try again.');
+  const data = await response.json();
+  if (!response.ok || !data.playerId) throw new Error(data.error || 'Could not join this contest.');
+  if (data.session) saveLocalSession(sessionId, data.session);
+  return data.playerId;
 }
 
 // ─── Admin Game Controls & Timer Management ───────────────────────────────────
@@ -229,373 +214,155 @@ export async function joinSession(
 /**
  * Configure the duration for upcoming questions without resetting the active running question.
  */
-export async function setQuestionDuration(sessionId: string, duration: number): Promise<void> {
-  const cleanDuration = Math.max(5, Math.min(300, Math.round(duration)));
+async function postAdminAction(action: string, sessionId: string, fields: Record<string, unknown> = {}): Promise<void> {
+  const response = await withTimeout(fetch(`/api/quiz/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, ...fields }),
+  }), 5000, 'The server did not respond. Check your connection before trying again.');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'The contest could not be updated.');
+  if (data.session) saveLocalSession(sessionId, data.session);
+}
 
+async function changeFirebaseSession(sessionId: string, change: (session: GameSession) => GameSession): Promise<GameSession> {
+  // Do not race a timeout against this write: a queued transaction can still commit.
+  // Returning null on the first uncached invocation lets Firebase retry with remote data.
+  const result = await runTransaction(ref(db, `sessions/${sessionId}`), (current) => current === null ? null : change(current as GameSession), { applyLocally: false });
+  if (!result.snapshot.exists()) throw new Error('This contest no longer exists. Ask the host for a new code.');
+  return { ...result.snapshot.val(), id: sessionId } as GameSession;
+}
+
+function cleanTime(duration: number) {
+  if (!Number.isFinite(duration)) throw new Error('Choose a valid question time.');
+  return Math.max(5, Math.min(300, Math.round(duration)));
+}
+
+export async function renamePlayer(sessionId: string, playerId: string, nickname: string): Promise<void> {
+  const name = normalizeNickname(nickname);
   if (isFirebaseConfigured) {
-    const updates: Record<string, unknown> = {
-      nextQuestionDuration: cleanDuration,
-    };
-    // If session is still in lobby, also initialize the questionDuration
-    const s = getLocalSession(sessionId);
-    if (s?.phase === 'lobby') {
-      updates.questionDuration = cleanDuration;
-    }
-    await withTimeout(
-      update(ref(db, `sessions/${sessionId}`), updates),
-      4000,
-      'Failed to update duration in Firebase'
-    );
+    await changeFirebaseSession(sessionId, (session) => renameContestPlayer(session, playerId, name));
     return;
   }
+  await postAdminAction('rename-player', sessionId, { playerId, nickname: name });
+}
 
-  try {
-    const res = await fetch('/api/quiz/duration', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, duration: cleanDuration }),
+export async function removePlayer(sessionId: string, playerId: string): Promise<void> {
+  if (isFirebaseConfigured) {
+    await changeFirebaseSession(sessionId, (session) => removeContestPlayer(session, playerId));
+    return;
+  }
+  await postAdminAction('remove-player', sessionId, { playerId });
+}
+
+export async function setQuestionDuration(sessionId: string, duration: number): Promise<void> {
+  const time = cleanTime(duration);
+  if (isFirebaseConfigured) {
+    await changeFirebaseSession(sessionId, (session) => {
+      if (session.phase === 'finished') throw new Error('This contest has finished. Its results are saved.');
+      return { ...session, nextQuestionDuration: time, ...(session.phase === 'lobby' ? { questionDuration: time } : {}) };
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (e) {
-    console.warn('Server duration error:', e);
+    return;
   }
-
-  const session = getLocalSession(sessionId);
-  if (!session) return;
-  session.nextQuestionDuration = cleanDuration;
-  if (session.phase === 'lobby') {
-    session.questionDuration = cleanDuration;
-  }
-  saveLocalSession(sessionId, session);
+  await postAdminAction('duration', sessionId, { duration: time });
 }
 
 export async function startGame(sessionId: string, duration?: number): Promise<void> {
-  const s = getLocalSession(sessionId);
-  const dur = duration ?? s?.nextQuestionDuration ?? s?.questionDuration ?? 20;
-
   if (isFirebaseConfigured) {
-    await withTimeout(
-      update(ref(db, `sessions/${sessionId}`), {
-        phase: 'question' as GamePhase,
-        currentQuestionIndex: 0,
-        questionStartedAt: serverTimestamp(),
-        questionRevealedAt: null,
-        questionDuration: dur,
-        nextQuestionDuration: dur,
-      }),
-      4000,
-      'Failed to start game in Firebase'
-    );
+    await changeFirebaseSession(sessionId, (session) => {
+      if (session.phase !== 'lobby') throw new Error('This contest has already started.');
+      const questions = session.questions || [];
+      if (!questions.length) throw new Error('This contest has no questions.');
+      const time = cleanTime(duration ?? session.nextQuestionDuration ?? questions[0].timeLimit);
+      return { ...session, phase: 'question', currentQuestionIndex: 0,
+        questionStartedAt: serverTimestamp() as unknown as number, questionRevealedAt: null,
+        questionDuration: time, nextQuestionDuration: questions[1]?.timeLimit ?? time };
+    });
     return;
   }
-
-  try {
-    const res = await fetch('/api/quiz/start', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, duration: dur }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (e) {
-    console.warn('Server start error:', e);
-  }
-
-  const session = getLocalSession(sessionId);
-  if (!session) return;
-  session.phase = 'question';
-  session.currentQuestionIndex = 0;
-  session.questionStartedAt = Date.now();
-  session.questionRevealedAt = null;
-  session.questionDuration = dur;
-  session.nextQuestionDuration = dur;
-  saveLocalSession(sessionId, session);
+  await postAdminAction('start', sessionId, duration === undefined ? {} : { duration: cleanTime(duration) });
 }
 
 export async function revealAnswer(sessionId: string, session: GameSession): Promise<void> {
-  const qList = session.questions && session.questions.length > 0 ? session.questions : QUESTIONS;
-  const questionIndex = session.currentQuestionIndex;
-  const question = qList[questionIndex];
-  const questionStartedAt = session.questionStartedAt || Date.now();
-  // Use admin-configured duration for speed bonus calculation
-  const timeLimit = (session.questionDuration ?? question?.timeLimit ?? 20) * 1000;
-
   if (isFirebaseConfigured) {
-    const sessionUpdates: Record<string, unknown> = {
-      phase: 'revealing' as GamePhase,
-      questionRevealedAt: serverTimestamp(),
-    };
-
-    const players = session.players || {};
-    for (const [playerId, player] of Object.entries(players)) {
-      const answer = player.answers?.[question.id];
-      if (!answer) continue;
-
-      const isCorrect = answer.answerIndex === question.correctIndex;
-      let points = 0;
-
-      if (isCorrect) {
-        const elapsed = (answer.answeredAt || Date.now()) - questionStartedAt;
-        const ratio = Math.max(0, Math.min(1, 1 - elapsed / timeLimit));
-        const speedBonus = Math.round(SPEED_BONUS_MAX * ratio);
-        points = MAX_POINTS_PER_QUESTION + speedBonus;
-      }
-
-      sessionUpdates[`players/${playerId}/answers/${question.id}/isCorrect`] = isCorrect;
-      sessionUpdates[`players/${playerId}/answers/${question.id}/pointsEarned`] = points;
-      sessionUpdates[`players/${playerId}/score`] = (player.score || 0) + points;
-    }
-
-    await withTimeout(
-      update(ref(db, `sessions/${sessionId}`), sessionUpdates),
-      4000,
-      'Failed to reveal answer in Firebase'
-    );
+    await changeFirebaseSession(sessionId, (current) => revealQuestion(current, session.currentQuestionIndex, getServerTime()));
     return;
   }
-
-  // Server-backed reveal
-  try {
-    const res = await fetch('/api/quiz/reveal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (e) {
-    console.warn('Server reveal error:', e);
-  }
-
-  // Local fallback
-  const s = getLocalSession(sessionId);
-  if (!s) return;
-  s.phase = 'revealing';
-  s.questionRevealedAt = Date.now();
-
-  const players = s.players || {};
-  for (const player of Object.values(players)) {
-    const answer = player.answers?.[question.id];
-    if (!answer) continue;
-
-    const isCorrect = answer.answerIndex === question.correctIndex;
-    let points = 0;
-
-    if (isCorrect) {
-      const elapsed = (answer.answeredAt || Date.now()) - questionStartedAt;
-      const ratio = Math.max(0, Math.min(1, 1 - elapsed / timeLimit));
-      const speedBonus = Math.round(SPEED_BONUS_MAX * ratio);
-      points = MAX_POINTS_PER_QUESTION + speedBonus;
-    }
-
-    player.answers[question.id].isCorrect = isCorrect;
-    player.answers[question.id].pointsEarned = points;
-    player.score = (player.score || 0) + points;
-  }
-
-  saveLocalSession(sessionId, s);
+  await postAdminAction('reveal', sessionId, { currentIndex: session.currentQuestionIndex });
 }
 
-export async function advanceToLeaderboard(sessionId: string): Promise<void> {
+export async function nextQuestion(sessionId: string, currentIndex: number, duration?: number): Promise<void> {
   if (isFirebaseConfigured) {
-    await withTimeout(
-      update(ref(db, `sessions/${sessionId}`), {
-        phase: 'leaderboard' as GamePhase,
-      }),
-      4000
-    );
-    return;
-  }
-
-  const s = getLocalSession(sessionId);
-  if (!s) return;
-  s.phase = 'leaderboard';
-  saveLocalSession(sessionId, s);
-}
-
-export async function nextQuestion(
-  sessionId: string,
-  currentIndex: number,
-  duration?: number
-): Promise<void> {
-  const nextIndex = currentIndex + 1;
-  const s = getLocalSession(sessionId);
-  const qList = s?.questions && s.questions.length > 0 ? s.questions : QUESTIONS;
-  const dur = duration ?? s?.nextQuestionDuration ?? qList[nextIndex]?.timeLimit ?? 20;
-
-  if (isFirebaseConfigured) {
-    if (nextIndex >= qList.length) {
-      await withTimeout(
-        update(ref(db, `sessions/${sessionId}`), {
-          phase: 'finished' as GamePhase,
-          endedAt: Date.now(),
-        }),
-        4000
-      );
-    } else {
-      await withTimeout(
-        update(ref(db, `sessions/${sessionId}`), {
-          phase: 'question' as GamePhase,
-          currentQuestionIndex: nextIndex,
-          questionStartedAt: serverTimestamp(),
-          questionRevealedAt: null,
-          questionDuration: dur,
-        }),
-        4000
-      );
-    }
-    return;
-  }
-
-  // Server-backed next question
-  try {
-    const res = await fetch('/api/quiz/next', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, currentIndex, duration: dur }),
+    await changeFirebaseSession(sessionId, (session) => {
+      if (session.currentQuestionIndex !== currentIndex || !['revealing', 'leaderboard'].includes(session.phase)) throw new Error('The question has changed. Refresh the host controls.');
+      const questions = session.questions || [];
+      const nextIndex = currentIndex + 1;
+      if (nextIndex >= questions.length) return finishContest(session, getServerTime());
+      const time = cleanTime(duration ?? session.nextQuestionDuration ?? questions[nextIndex].timeLimit);
+      return { ...session, phase: 'question', currentQuestionIndex: nextIndex,
+        questionStartedAt: serverTimestamp() as unknown as number, questionRevealedAt: null,
+        questionDuration: time, nextQuestionDuration: questions[nextIndex + 1]?.timeLimit ?? time };
     });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (e) {
-    console.warn('Server next question error:', e);
+    return;
   }
-
-  if (!s) return;
-
-  if (nextIndex >= qList.length) {
-    s.phase = 'finished';
-    s.endedAt = Date.now();
-  } else {
-    s.phase = 'question';
-    s.currentQuestionIndex = nextIndex;
-    s.questionStartedAt = Date.now();
-    s.questionRevealedAt = null;
-    s.questionDuration = dur;
-  }
-
-  saveLocalSession(sessionId, s);
+  await postAdminAction('next', sessionId, { currentIndex, ...(duration === undefined ? {} : { duration: cleanTime(duration) }) });
 }
 
 export async function endGame(sessionId: string): Promise<void> {
   if (isFirebaseConfigured) {
-    await withTimeout(
-      update(ref(db, `sessions/${sessionId}`), {
-        phase: 'finished' as GamePhase,
-        endedAt: Date.now(),
-      }),
-      4000
-    );
+    await changeFirebaseSession(sessionId, (session) => finishContest(session, getServerTime()));
     return;
   }
-
-  try {
-    const res = await fetch('/api/quiz/end', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (e) {}
-
-  const s = getLocalSession(sessionId);
-  if (!s) return;
-  s.phase = 'finished';
-  s.endedAt = Date.now();
-  saveLocalSession(sessionId, s);
+  await postAdminAction('end', sessionId);
 }
 
-// ─── Player Answer Submission ─────────────────────────────────────────────────
-
-export async function submitAnswer(
-  sessionId: string,
-  playerId: string,
-  questionId: string,
-  answerIndex: number
-): Promise<void> {
-  const answerPayload: Omit<PlayerAnswer, 'isCorrect' | 'pointsEarned'> = {
-    answerIndex,
-    answeredAt: Date.now(),
-  };
-
+export async function submitAnswer(sessionId: string, playerId: string, questionId: string, answerIndex: number): Promise<PlayerAnswer> {
+  if (!Number.isInteger(answerIndex) || answerIndex < 0 || answerIndex > 3) throw new Error('Choose one of the four answers.');
   if (isFirebaseConfigured) {
-    const answerPath = `sessions/${sessionId}/players/${playerId}/answers/${questionId}`;
-    await withTimeout(set(ref(db, answerPath), answerPayload), 3500, 'Failed to save answer');
-    return;
+    observeServerClock();
+    const result = await changeFirebaseSession(sessionId, (session) => {
+      const player = session.players?.[playerId];
+      if (!player) throw new Error('Your player is no longer in this contest. Please rejoin.');
+      if (player.answers?.[questionId]) return session; // An acknowledged retry never replaces the first answer.
+      const question = session.questions?.[session.currentQuestionIndex];
+      if (session.phase !== 'question' || question?.id !== questionId || session.questionStartedAt === null) throw new Error('This question is no longer accepting answers.');
+      const deadline = session.questionStartedAt + (session.questionDuration ?? question.timeLimit) * 1000 + ANSWER_GRACE_MS;
+      if (getServerTime() > deadline) throw new Error('Your answer arrived after time ran out.');
+      return { ...session, players: { ...session.players, [playerId]: { ...player, answers: { ...player.answers,
+        [questionId]: { answerIndex, answeredAt: serverTimestamp() as unknown as number },
+      } } } };
+    });
+    return result.players[playerId].answers[questionId];
   }
 
-  // Server-backed answer submission
-  try {
-    const res = await withTimeout(
-      fetch('/api/quiz/answer', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, playerId, questionId, answerIndex }),
-      }),
-      3500,
-      'Submission request timed out'
-    );
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.session) saveLocalSession(sessionId, data.session);
-      return;
-    }
-  } catch (err: any) {
-    console.warn('Server answer failed, attempting local fallback:', err);
-  }
-
-  // Local fallback
-  const s = getLocalSession(sessionId);
-  if (!s) throw new Error('Arena session not found. Please refresh or rejoin.');
-  const p = s.players?.[playerId];
-  if (!p) throw new Error('Player not found in active session.');
-
-  if (!p.answers) p.answers = {};
-  if (p.answers[questionId] !== undefined) return; // Already locked
-
-  p.answers[questionId] = {
-    answerIndex,
-    answeredAt: Date.now(),
-    isCorrect: false,
-    pointsEarned: 0,
-  };
-
-  saveLocalSession(sessionId, s);
+  const response = await withTimeout(fetch('/api/quiz/answer', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionId, playerId, questionId, answerIndex }),
+  }), 5000, 'Answer not confirmed. Check your connection before trying again.');
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Your answer was not accepted. Try again while there is time.');
+  if (!data.answer) throw new Error('Answer not confirmed. Please try again.');
+  return data.answer as PlayerAnswer;
 }
 
 // ─── Real-time Listeners ──────────────────────────────────────────────────────
 
 export function subscribeToSession(
   sessionId: string,
-  callback: (session: GameSession | null) => void
+  callback: (session: GameSession | null) => void,
+  onConnection?: (connected: boolean) => void
 ): () => void {
   if (isFirebaseConfigured) {
     const sessionRef = ref(db, `sessions/${sessionId}`);
-    return onValue(sessionRef, (snap) => {
+    const stopConnection = onValue(ref(db, '.info/connected'), (snap) => onConnection?.(snap.val() === true));
+    const stopSession = onValue(sessionRef, (snap) => {
       if (!snap.exists()) {
         callback(null);
         return;
       }
       const data = snap.val();
       callback({ id: sessionId, ...data } as GameSession);
-    });
+    }, () => onConnection?.(false));
+    return () => { stopSession(); stopConnection(); };
   }
 
   // 1. Initial cached state
@@ -606,8 +373,8 @@ export function subscribeToSession(
   fetch(`/api/quiz/session?id=${encodeURIComponent(sessionId)}`)
     .then((res) => (res.ok ? res.json() : null))
     .then((data) => {
-      if (data?.session) {
-        saveLocalSession(sessionId, data.session);
+      if (data && 'session' in data) {
+        if (data.session) saveLocalSession(sessionId, data.session);
         callback(data.session);
       }
     })
@@ -617,18 +384,19 @@ export function subscribeToSession(
   let eventSource: EventSource | null = null;
   try {
     eventSource = new EventSource(`/api/quiz/events?sessionId=${encodeURIComponent(sessionId)}`);
+    eventSource.onopen = () => onConnection?.(true);
     eventSource.onmessage = (e) => {
       try {
         const payload = JSON.parse(e.data);
-        if (payload.type === 'SESSION_UPDATE' && payload.session) {
-          saveLocalSession(sessionId, payload.session);
+        if (payload.type === 'SESSION_UPDATE') {
+          if (payload.session) saveLocalSession(sessionId, payload.session);
           callback(payload.session);
         }
       } catch (err) {
         console.error('Failed to parse SSE payload:', err);
       }
     };
-    eventSource.onerror = () => {};
+    eventSource.onerror = () => onConnection?.(false);
   } catch (err) {
     console.warn('EventSource connection failed:', err);
   }

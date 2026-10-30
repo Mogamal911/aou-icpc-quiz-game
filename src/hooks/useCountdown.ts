@@ -1,3 +1,4 @@
+import { getServerTime, observeServerClock } from '../services/clockService';
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 /**
@@ -8,7 +9,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 export function useCountdown(startedAt: number | null, timeLimit: number) {
   const calculateRemaining = useCallback(() => {
     if (startedAt === null) return timeLimit;
-    const elapsed = (Date.now() - startedAt) / 1000;
+    const elapsed = (getServerTime() - startedAt) / 1000;
     return Math.max(0, timeLimit - elapsed);
   }, [startedAt, timeLimit]);
 
@@ -17,6 +18,7 @@ export function useCountdown(startedAt: number | null, timeLimit: number) {
   const lastSecondRef = useRef(timeLeft);
 
   useEffect(() => {
+    observeServerClock();
     if (startedAt === null) {
       setTimeLeft(timeLimit);
       lastSecondRef.current = timeLimit;

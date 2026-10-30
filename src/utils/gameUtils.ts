@@ -1,13 +1,13 @@
 import type { Player, LeaderboardEntry } from '../types/game';
 
 export function buildLeaderboard(players: Record<string, Player>): LeaderboardEntry[] {
-  return Object.entries(players)
+  const sorted = Object.entries(players)
     .map(([id, p]) => ({ playerId: id, nickname: p.nickname, score: p.score || 0, rank: 0 }))
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.nickname.localeCompare(b.nickname); // stable tie-break
-    })
-    .map((entry, i) => ({ ...entry, rank: i + 1 }));
+    .sort((a, b) => b.score - a.score || a.nickname.localeCompare(b.nickname) || a.playerId.localeCompare(b.playerId));
+  return sorted.map((entry, index) => {
+    entry.rank = index > 0 && entry.score === sorted[index - 1].score ? sorted[index - 1].rank : index + 1;
+    return entry;
+  });
 }
 
 export function countAnsweredPlayers(

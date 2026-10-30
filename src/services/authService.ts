@@ -131,7 +131,7 @@ export function onAdminAuthChange(callback: (user: User | null) => void): () => 
   authListeners.add(callback);
 
   const localUser = getLocalAdmin();
-  if (localUser) {
+  if (localUser || !isFirebaseConfigured) {
     callback(localUser);
   }
 
