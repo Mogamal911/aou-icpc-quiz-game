@@ -32,9 +32,11 @@ export const push=()=>({key:'test_id_'+(++nextId)});
 export const serverTimestamp=()=>({'.sv':'timestamp'});
 export const onValue=()=>()=>{};
 export const runTransaction=async(path,edit)=>{
- if(edit(null)!==null)throw Error('Cold-cache null must be preserved for SDK retry.');
- let result=edit(structuredClone(globalThis.adminTestRemote));
- if(globalThis.adminTestRetryRemote){globalThis.adminTestRemote=globalThis.adminTestRetryRemote;globalThis.adminTestRetryRemote=null;result=edit(structuredClone(globalThis.adminTestRemote));}
+ const invoke=(value)=>{try{return edit(structuredClone(value));}catch{throw Error('Transaction callback threw instead of returning undefined to abort.');}};
+ if(invoke(null)!==null)throw Error('Cold-cache null must be preserved for SDK retry.');
+ let result=invoke(globalThis.adminTestRemote);
+ if(result!==undefined&&globalThis.adminTestRetryRemote){globalThis.adminTestRemote=globalThis.adminTestRetryRemote;globalThis.adminTestRetryRemote=null;result=invoke(globalThis.adminTestRemote);}
+ if(result===undefined)return {committed:false,snapshot:{exists:()=>globalThis.adminTestRemote!==null,val:()=>globalThis.adminTestRemote}};
  result=JSON.parse(JSON.stringify(result,(_key,value)=>value?.['.sv']==='timestamp'?Date.now():value));
  globalThis.adminTestRemote=result;
  globalThis.adminTestWrites.push({path,value:result});
@@ -70,13 +72,23 @@ try {
   const service = await bundle('src/services/gameService.ts');
   const bank = await bundle('src/services/questionBankService.ts');
   const original = await bank.getQuestionBank();
+  const browserCrypto = globalThis.crypto;
+  // HTTP origins expose getRandomValues but not randomUUID.
+  Object.defineProperty(globalThis, 'crypto', { configurable: true, value: { getRandomValues: browserCrypto.getRandomValues.bind(browserCrypto) } });
+  let questionId;
+  try {
+    questionId = bank.createQuestionId();
+    assert.match(questionId, /^q_[a-f0-9]{32}$/);
+    assert.notEqual(bank.createQuestionId(), questionId);
+  } finally { Object.defineProperty(globalThis, 'crypto', { configurable: true, value: browserCrypto }); }
   const goodFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response('{}', { status: 503 });
   await assert.rejects(bank.getQuestionBank(), /Could not load/);
   globalThis.fetch = goodFetch;
-  const authored = { ...original[0], id: 'authored', text: 'Saved authoring test', timeLimit: 35, difficulty: 'advanced' };
+  const authored = { ...original[0], id: questionId, text: 'Saved authoring test', timeLimit: 35, difficulty: 'advanced' };
   await bank.saveQuestionBank([...original, authored]);
   assert.equal((await bank.getQuestionBank()).at(-1).text, authored.text);
+  assert.equal((await bank.getQuestionBank()).at(-1).id, questionId);
   assert.equal((await bank.getQuestionBank()).at(-1).difficulty, 'advanced');
   const legacy = { ...authored }; delete legacy.difficulty;
   assert.equal(bank.normalizeQuestion(legacy).difficulty, undefined);
@@ -90,6 +102,7 @@ try {
   assert.deepEqual(session.questions.map((q) => q.difficulty), selected.map((q) => q.difficulty));
   await bank.saveQuestionBank([authored]);
   assert.equal((await read(id)).questions.length, 3);
+  evidence.push('HTTP-compatible question IDs work without randomUUID and persist through the real bank service.');
   evidence.push('Saved authoring round-trip and selected ordered session snapshot survive later bank edits.');
   await service.startGame(id);
   session = await read(id);
@@ -205,6 +218,14 @@ try {
   const basePlayer = { id: 'a', nickname: 'Alice', score: 0, joinedAt: now, answers: {}, isConnected: true };
   globalThis.adminTestRemote = { id: 'firebase-score', phase: 'question', currentQuestionIndex: 0, questionStartedAt: now, questionRevealedAt: null, questionDuration: 20, questions: scoreQuestions, players: { a: basePlayer }, createdAt: now, joinCode: 'SCORES' };
   await assert.rejects(firebase.submitAnswer('firebase-score', 'a', 'score2', 1), /no longer/);
+  const answering = structuredClone(globalThis.adminTestRemote);
+  globalThis.adminTestRetryRemote = { ...answering, phase: 'revealing' };
+  const writesBeforeRetry = globalThis.adminTestWrites.length;
+  await assert.rejects(firebase.submitAnswer('firebase-score', 'a', 'score1', 0), /no longer/);
+  assert.equal(globalThis.adminTestRemote.phase, 'revealing');
+  assert.equal(globalThis.adminTestRemote.players.a.answers.score1, undefined);
+  assert.equal(globalThis.adminTestWrites.length, writesBeforeRetry);
+  globalThis.adminTestRemote = answering;
   await firebase.submitAnswer('firebase-score', 'a', 'score1', 0);
   assert.equal(globalThis.adminTestRemote.players.a.answers.score1.answeredAt, now);
   now += 10000;
@@ -223,6 +244,7 @@ try {
   await assert.rejects(firebase.nextQuestion('firebase-score', 0), /question has changed/);
   now += 31501;
   await assert.rejects(firebase.submitAnswer('firebase-score', 'a', 'score2', 1), /time ran out/);
+  evidence.push('Firebase guard failures abort explicitly, including phase changes on retry, without accepting an answer or preventing a later write.');
   evidence.push('Firebase service + SDK stub: server timestamps, first-write wins, cold-cache/retry handling, authoritative scores and stale-action guards pass (not an emulator test).');
   // Unique names and host controls go through the real HTTP service boundary.
   const rosterId = await service.createGameSession(scoreQuestions); sessions.push(rosterId);

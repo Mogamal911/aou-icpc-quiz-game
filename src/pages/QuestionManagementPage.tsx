@@ -3,7 +3,7 @@ import { useAdminAuth } from '../hooks/useAdminAuth';
 import { AdminLogin } from '../components/admin/AdminLogin';
 import { AdminLayout } from '../components/admin/AdminLayout';
 import { adminSignOut } from '../services/authService';
-import { getQuestionBank, saveQuestionBank } from '../services/questionBankService';
+import { createQuestionId, getQuestionBank, saveQuestionBank } from '../services/questionBankService';
 import { QUESTIONS } from '../data/questions';
 import { LEVEL_LABELS, type QuestionLevelFilter as LevelFilter } from '../data/questionLevels';
 import { QuestionLevelFilter } from '../components/admin/QuestionLevelFilter';
@@ -68,7 +68,7 @@ export function QuestionManagementPage() {
   }
 
   async function duplicate(question: Question) {
-    const copy = { ...question, id: `q_${crypto.randomUUID()}`, text: `${question.text} (copy)` };
+    const copy = { ...question, id: createQuestionId(), text: `${question.text} (copy)` };
     const next = [...questions];
     next.splice(questions.findIndex((q) => q.id === question.id) + 1, 0, copy);
     try { await persist(next, 'Question duplicated.'); setEditing(copy); } catch { /* Error stays visible. */ }

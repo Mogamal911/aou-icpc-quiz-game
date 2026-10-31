@@ -222,3 +222,9 @@ export async function resetQuestionBankToDefault(): Promise<Question[]> {
   await saveQuestionBank(normalized);
   return normalized;
 }
+
+/** Random IDs also work when the host uses an HTTP LAN address. */
+export function createQuestionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return `q_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}

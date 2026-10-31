@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Question, QuestionType, CodeLanguage, QuestionDifficulty } from '../../types/game';
-import { validateQuestion } from '../../services/questionBankService';
+import { createQuestionId, validateQuestion } from '../../services/questionBankService';
 import { QUESTION_LEVELS, LEVEL_LABELS, LEVEL_DESCRIPTIONS } from '../../data/questionLevels';
 import { CodeEditor } from './CodeEditor';
 import { Dialog } from '../ui/Dialog';
@@ -41,7 +41,7 @@ export function QuestionFormModal({ initialQuestion, onSave, onCancel }: {
     event.preventDefault();
     if (saving) return;
     const question: Question = {
-      id: initialQuestion?.id || `q_${crypto.randomUUID()}`, type, text: text.trim(),
+      id: initialQuestion?.id || createQuestionId(), type, text: text.trim(),
       options: options.map((option) => option.trim()) as Question['options'], correctIndex,
       ...(difficulty ? { difficulty } : {}),
       timeLimit: Number(time), category: category.trim(), explanation: explanation.trim(),

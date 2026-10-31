@@ -227,7 +227,17 @@ async function postAdminAction(action: string, sessionId: string, fields: Record
 async function changeFirebaseSession(sessionId: string, change: (session: GameSession) => GameSession): Promise<GameSession> {
   // Do not race a timeout against this write: a queued transaction can still commit.
   // Returning null on the first uncached invocation lets Firebase retry with remote data.
-  const result = await runTransaction(ref(db, `sessions/${sessionId}`), (current) => current === null ? null : change(current as GameSession), { applyLocally: false });
+  let rejection: Error | undefined;
+  const result = await runTransaction(ref(db, `sessions/${sessionId}`), (current) => {
+    if (current === null) return null;
+    try { return change(current as GameSession); }
+    catch (error) {
+      rejection = error instanceof Error ? error : new Error('The contest could not be updated.');
+      return undefined; // Firebase requires an explicit abort; throwing during a retry can strand the write.
+    }
+  }, { applyLocally: false });
+  if (rejection) throw rejection;
+  if (!result.committed) throw new Error('The contest could not be updated. Try again.');
   if (!result.snapshot.exists()) throw new Error('This contest no longer exists. Ask the host for a new code.');
   return { ...result.snapshot.val(), id: sessionId } as GameSession;
 }
