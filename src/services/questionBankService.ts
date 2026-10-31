@@ -2,6 +2,7 @@ import { ref, get, set } from 'firebase/database';
 import { db } from '../firebase/firebase';
 import { isFirebaseConfigured } from '../firebase/config';
 import { QUESTIONS } from '../data/questions';
+import { QUESTION_LEVELS } from '../data/questionLevels';
 import type { Question, CodeLanguage } from '../types/game';
 
 const LOCAL_STORAGE_KEY = 'aou_question_bank';
@@ -51,6 +52,7 @@ export function normalizeQuestion(q: Partial<Question>, defaultIndex = 0): Quest
     options,
     correctIndex,
     timeLimit,
+    ...(q.difficulty && QUESTION_LEVELS.includes(q.difficulty) ? { difficulty: q.difficulty } : {}),
     category: String(q.category ?? 'General ICPC').trim() || 'General ICPC',
     explanation: String(q.explanation ?? '').trim(),
   };
@@ -120,6 +122,10 @@ export function validateQuestion(q: Partial<Question>): { isValid: boolean; erro
     errors.push('Exactly one correct answer must be selected (A, B, C, or D).');
   }
 
+  if (q.difficulty && !QUESTION_LEVELS.includes(q.difficulty)) {
+    errors.push('Choose Beginner, Intermediate or Advanced.');
+  }
+
   const timeLimit = Number(q.timeLimit);
   if (isNaN(timeLimit) || timeLimit < 5 || timeLimit > 300) {
     errors.push('Time limit must be a positive number between 5 and 300 seconds.');
@@ -156,38 +162,17 @@ export async function getQuestionBank(): Promise<Question[]> {
       );
       return normalizedDefaults;
     } catch (err) {
-      console.warn('Failed to load question bank from Firebase:', err);
+      throw new Error('Could not load your saved questions. Check your connection and retry.');
     }
   }
 
-  // Dev sync server mode
-  try {
-    const res = await fetch('/api/quiz/questions');
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.questions) && data.questions.length > 0) {
-        const normalized = data.questions.map((q: any, idx: number) => normalizeQuestion(q, idx));
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalized));
-        return normalized;
-      }
-    }
-  } catch (err) {
-    console.warn('Dev sync questions fetch error:', err);
-  }
-
-  // Local storage fallback
-  try {
-    const local = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (local) {
-      const parsed = JSON.parse(local);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return parsed.map((q: any, idx: number) => normalizeQuestion(q, idx));
-      }
-    }
-  } catch {}
-
-  // Default seed
-  return QUESTIONS.map((q, idx) => normalizeQuestion(q, idx));
+  const response = await withTimeout(fetch('/api/quiz/questions'), 5000, 'Could not load questions. Check the local server and retry.');
+  if (!response.ok) throw new Error('Could not load questions. Check the local server and retry.');
+  const data = await response.json();
+  if (!Array.isArray(data.questions)) throw new Error('The server returned an invalid question bank. Retry after checking the server.');
+  const normalized = data.questions.map((question: Partial<Question>, index: number) => normalizeQuestion(question, index));
+  try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalized)); } catch { /* Cache is optional. */ }
+  return normalized;
 }
 
 export async function saveQuestionBank(questions: Question[]): Promise<void> {
@@ -222,16 +207,12 @@ export async function saveQuestionBank(questions: Question[]): Promise<void> {
     return;
   }
 
-  // Dev sync server mode
-  try {
-    await fetch('/api/quiz/questions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questions: sanitized }),
-    });
-  } catch (err) {
-    console.warn('Dev sync questions save error:', err);
-  }
+  // A successful editor save means the shared bank accepted the write.
+  const response = await withTimeout(fetch('/api/quiz/questions', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ questions: sanitized }),
+  }), 6000, 'Could not save the question bank. Check the local server and try again.');
+  if (!response.ok) throw new Error('Could not save the question bank. Please try again.');
 
   localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(sanitized));
 }
@@ -240,4 +221,10 @@ export async function resetQuestionBankToDefault(): Promise<Question[]> {
   const normalized = QUESTIONS.map((q, idx) => normalizeQuestion(q, idx));
   await saveQuestionBank(normalized);
   return normalized;
+}
+
+/** Random IDs also work when the host uses an HTTP LAN address. */
+export function createQuestionId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return `q_${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }

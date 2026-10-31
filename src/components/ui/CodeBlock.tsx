@@ -1,6 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
+import { useTransientState } from '../../hooks/useTransientState';
+import { Icon } from './Icon';
 import type { CodeLanguage } from '../../types/game';
-import { highlightCode, getLanguageLabel, getLanguageFileExtension } from '../../utils/codeHighlight';
+import { highlightCode, getLanguageLabel } from '../../utils/codeHighlight';
 
 interface CodeBlockProps {
   code: string;
@@ -19,17 +21,15 @@ export function CodeBlock({
   className = '',
   filename,
 }: CodeBlockProps) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useTransientState(false, 2500);
 
   const lines = useMemo(() => highlightCode(code, language), [code, language]);
   const langLabel = getLanguageLabel(language);
-  const displayFile = filename || getLanguageFileExtension(language);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
       // Fallback
     }
@@ -41,59 +41,38 @@ export function CodeBlock({
       ? 'text-base sm:text-lg xl:text-xl leading-relaxed sm:leading-loose'
       : size === 'sm'
       ? 'text-xs leading-normal'
-      : 'text-xs sm:text-sm leading-relaxed';
+      : 'text-sm leading-relaxed';
 
   const gutterWidth = lines.length >= 100 ? 'w-10' : lines.length >= 10 ? 'w-8' : 'w-6';
 
   return (
     <div
-      className={`rounded-2xl border border-[#C8A752]/35 bg-[#070D1B] shadow-2xl overflow-hidden font-mono ${className}`}
+      className={`rounded-xl border border-[#34425b] bg-[#0b1526] overflow-hidden font-mono ${className}`}
     >
-      {/* IDE Header Bar */}
-      <div className="bg-[#0A142B] border-b border-[#C8A752]/25 px-4 py-2.5 flex items-center justify-between select-none">
-        {/* Left: Window Dots & File Tab */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#FF5F56]/80 border border-[#E0443E]/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[#FFBD2E]/80 border border-[#DEA123]/80 inline-block" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[#27C93F]/80 border border-[#1AAB29]/80 inline-block" />
-          </div>
-
-          <div className="flex items-center gap-2 bg-[#070D1B] border border-[#C8A752]/30 px-3 py-1 rounded-md text-xs text-[#E6EDF3] font-sans font-medium">
-            <span className="text-amber-400">📄</span>
-            <span>{displayFile}</span>
-          </div>
-        </div>
-
-        {/* Right: Language Indicator Badge & Copy Button */}
-        <div className="flex items-center gap-2.5">
-          <span className="text-[11px] bg-[#C8A752]/15 text-[#F0D278] border border-[#C8A752]/35 px-2.5 py-0.5 rounded-full font-sans font-bold uppercase tracking-wider">
-            {langLabel}
-          </span>
-
+      <div className="bg-[#0A142B] border-b border-[#34425b] px-4 py-2 flex items-center justify-between gap-3 font-sans">
+        <span className="text-sm text-[#bfccde] min-w-0 truncate">{filename ? `${filename} · ${langLabel}` : langLabel}</span>
           <button
             type="button"
             onClick={handleCopy}
-            className="text-[11px] bg-[#070D1B] hover:bg-[#0E1A36] border border-[#C8A752]/30 text-[#C8BFA8] hover:text-[#F0D278] px-2.5 py-1 rounded-md font-sans transition-colors flex items-center gap-1 active:scale-95"
+            className="text-[11px] bg-[#070D1B] hover:bg-[#0E1A36] border border-[#34425b] text-[#C8BFA8] hover:text-[#F0D278] px-2.5 py-2 min-h-[40px] shrink-0 rounded-md font-sans transition-colors flex items-center gap-1 active:scale-95"
             title="Copy code snippet"
           >
             {copied ? (
               <>
-                <span className="text-emerald-400">✓</span>
+                <Icon name="check" size={14} className="text-emerald-400" />
                 <span className="text-emerald-300">Copied</span>
               </>
             ) : (
               <>
-                <span>📋</span>
+                <Icon name="copy" size={14} />
                 <span>Copy</span>
               </>
             )}
           </button>
-        </div>
       </div>
 
       {/* Code Content Area with Line Numbers */}
-      <div className={`p-4 sm:p-5 overflow-x-auto ${textClass} selection:bg-[#264F78]`}>
+      <div tabIndex={0} role="region" aria-label={`${langLabel} code`} className={`p-4 sm:p-5 overflow-x-auto ${textClass} selection:bg-[#264F78] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#94a3b8]`}>
         <table className="w-full border-collapse">
           <tbody>
             {lines.map((line) => (

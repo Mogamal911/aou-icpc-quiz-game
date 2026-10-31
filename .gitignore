@@ -8,3 +8,6 @@ dist
 .DS_Store
 Thumbs.db
 
+
+# Local completed-contest snapshots (player data)
+.quiz-data/

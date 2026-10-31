@@ -1,121 +1,55 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useId, useMemo, useState } from 'react';
 import type { LeaderboardEntry } from '../../types/game';
-import { LaurelWreath, GoldDivider } from './RomanDecorations';
+import { Icon } from './Icon';
 
 interface LeaderboardPanelProps {
   entries: LeaderboardEntry[];
-  maxRows?: number;
+  pageSize?: number;
   highlightPlayerId?: string;
   showTitle?: boolean;
+  showScores?: boolean;
+  title?: string;
   className?: string;
+  renderActions?: (entry: LeaderboardEntry) => React.ReactNode;
 }
 
-const MEDAL_STYLES = [
-  { border: '#F0D278', bg: 'rgba(240, 210, 120, 0.15)', text: '#F0D278', label: '1ST' },
-  { border: '#D1D5DB', bg: 'rgba(209, 213, 219, 0.12)', text: '#E5E7EB', label: '2ND' },
-  { border: '#CD7F32', bg: 'rgba(205, 127, 50, 0.12)', text: '#E0A96D', label: '3RD' },
-];
-
 export const LeaderboardPanel = memo(function LeaderboardPanel({
-  entries,
-  maxRows = 10,
-  highlightPlayerId,
-  showTitle = true,
-  className = '',
+  entries, pageSize = 10, highlightPlayerId, showTitle = true, showScores = true,
+  title = 'Leaderboard', className = '', renderActions,
 }: LeaderboardPanelProps) {
-  const visible = entries.slice(0, maxRows);
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const searchId = useId();
+  const query = search.normalize('NFKC').trim().toLowerCase();
+  const filtered = useMemo(() => entries.filter((entry) => entry.nickname.normalize('NFKC').toLowerCase().includes(query)), [entries, query]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const start = (currentPage - 1) * pageSize;
+  const visible = filtered.slice(start, start + pageSize);
+  const myIndex = entries.findIndex((entry) => entry.playerId === highlightPlayerId);
+  useEffect(() => { setPage((previous) => Math.min(previous, pageCount)); }, [pageCount]);
 
-  return (
-    <div className={`w-full ${className}`}>
-      {showTitle && (
-        <div className="text-center mb-5">
-          <LaurelWreath className="mx-auto mb-2 opacity-90" size={80} />
-          <h2 className="font-serif text-xl sm:text-2xl font-bold tracking-[0.2em] uppercase text-[#F0D278]">
-            Imperial Standings
-          </h2>
-          <p className="font-sans text-[11px] uppercase tracking-widest text-[#C8A752]/60 mt-0.5">
-            Leaderboard
-          </p>
-          <GoldDivider className="mt-3 max-w-xs mx-auto" />
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {visible.map((entry) => {
-          const isHighlighted = entry.playerId === highlightPlayerId;
-          const isPodium = entry.rank <= 3;
-          const medal = isPodium ? MEDAL_STYLES[entry.rank - 1] : null;
-
-          return (
-            <div
-              key={entry.playerId}
-              className={`
-                flex items-center gap-3.5 px-4 py-2.5 sm:py-3 rounded-xl border
-                transition-colors duration-100
-                ${
-                  isHighlighted
-                    ? 'border-[#F0D278] bg-[#1A2E59] shadow-[0_0_20px_rgba(240,210,120,0.25)] ring-1 ring-[#F0D278]/50'
-                    : isPodium
-                    ? 'border-[#C8A752]/40 bg-[#0F1E3D]/80 hover:border-[#C8A752]/70'
-                    : 'border-[#C8A752]/20 bg-[#0B1630]/60 hover:border-[#C8A752]/40'
-                }
-              `}
-            >
-              {/* Rank Medallion */}
-              <div
-                className={`
-                  w-8 h-8 sm:w-9 sm:h-9 rounded-lg flex items-center justify-center flex-shrink-0 font-serif font-black text-sm border
-                  ${
-                    medal
-                      ? 'shadow-sm'
-                      : 'border-[#C8A752]/25 bg-[#060D1E] text-[#C8A752]/70'
-                  }
-                `}
-                style={{
-                  backgroundColor: medal ? medal.bg : undefined,
-                  borderColor: medal ? medal.border : undefined,
-                  color: medal ? medal.text : undefined,
-                }}
-              >
-                {entry.rank}
-              </div>
-
-              {/* Name & Details */}
-              <div className="flex-1 min-w-0">
-                <p
-                  className={`font-sans font-semibold text-sm sm:text-base truncate leading-tight ${
-                    isHighlighted
-                      ? 'text-[#FFF2C6] font-bold'
-                      : isPodium
-                      ? 'text-white'
-                      : 'text-[#E8E2D5]'
-                  }`}
-                >
-                  {entry.nickname}
-                  {isHighlighted && (
-                    <span className="ml-2 text-[10px] font-sans font-bold px-2 py-0.5 rounded-full bg-[#F0D278]/20 text-[#F0D278] border border-[#F0D278]/40 uppercase tracking-wider">
-                      You
-                    </span>
-                  )}
-                </p>
-                <p className="text-[11px] text-[#C8A752]/60 font-sans mt-0.5">
-                  Gladiator #{entry.rank}
-                </p>
-              </div>
-
-              {/* Score Display */}
-              <div className="text-right flex-shrink-0 pl-2">
-                <span className="font-serif font-black text-base sm:text-lg text-[#F0D278] tracking-tight">
-                  {entry.score.toLocaleString()}
-                </span>
-                <span className="text-[10px] font-sans font-semibold text-[#C8A752]/70 ml-1 uppercase">
-                  PTS
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+  return <div className={`standings ${className}`}>
+    {showTitle && <div className="standings-heading"><h2><Icon name={showScores ? 'trophy' : 'users'} />{title}</h2><span className="muted">{entries.length} {entries.length === 1 ? 'player' : 'players'}</span></div>}
+    <div className="standings-toolbar">
+      <label className="search-field" htmlFor={searchId}><Icon name="search" /><span className="sr-only">Search players</span><input id={searchId} type="search" value={search} placeholder="Search players…" onChange={(event) => { setSearch(event.target.value); setPage(1); }} /></label>
+      {myIndex >= 0 && <button className="button button-quiet" onClick={() => { setSearch(''); setPage(Math.floor(myIndex / pageSize) + 1); }}>Find my rank</button>}
     </div>
-  );
+    <div className="standings-table-wrap"><table className="standings-table">
+      <caption className="sr-only">{title}{showScores ? '. Ranks are for the whole contest, including when searching.' : ''}</caption>
+      <thead><tr>{showScores && <th scope="col" className="standings-rank">Rank</th>}<th scope="col">Player</th>{showScores && <th scope="col" className="standings-score">Points</th>}{renderActions && <th scope="col" className="standings-actions"><span className="sr-only">Player actions</span></th>}</tr></thead>
+      <tbody>{visible.map((entry) => <tr key={entry.playerId} className={entry.playerId === highlightPlayerId ? 'is-you' : ''}>
+        {showScores && <td className="standings-rank">{entry.score > 0 && entry.rank <= 3 && <Icon name="trophy" size={16} />}<span>{entry.rank}</span></td>}
+        <th scope="row"><span className="standings-name">{entry.nickname}</span>{entry.playerId === highlightPlayerId && <span className="standings-you">You</span>}</th>
+        {showScores && <td className="standings-score">{entry.score.toLocaleString()}</td>}
+        {renderActions && <td className="standings-actions">{renderActions(entry)}</td>}
+      </tr>)}</tbody>
+    </table>
+    {!visible.length && <div className="standings-empty"><p>{entries.length ? 'No players match your search.' : 'Waiting for players to join.'}</p>{search && <button className="button button-quiet" onClick={() => { setSearch(''); setPage(1); }}>Clear search</button>}</div>}
+    </div>
+    <nav className="standings-pagination" aria-label={`${title} pages`}>
+      <span className="muted" role="status">{filtered.length ? `${start + 1}–${Math.min(start + pageSize, filtered.length)} of ${filtered.length}` : '0 players'}{query && filtered.length > 0 ? ' matching' : ''}</span>
+      <div><button className="button button-quiet" aria-label="Previous page" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}><Icon name="back" /></button><span className="page-count">Page {currentPage} of {pageCount}</span><button className="button button-quiet" aria-label="Next page" disabled={currentPage >= pageCount} onClick={() => setPage(currentPage + 1)}><Icon name="arrow" /></button></div>
+    </nav>
+  </div>;
 });

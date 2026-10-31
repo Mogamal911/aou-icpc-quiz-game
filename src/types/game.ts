@@ -8,6 +8,7 @@ export type GamePhase =
   | 'finished';    // Game over / final rankings
 
 export type QuestionType = 'text' | 'code';
+export type QuestionDifficulty = 'beginner' | 'intermediate' | 'advanced';
 export type CodeLanguage = 'cpp' | 'c' | 'python' | 'java';
 
 export interface Question {
@@ -20,14 +21,15 @@ export interface Question {
   correctIndex: number; // 0–3
   timeLimit: number; // default seconds
   category?: string;
+  difficulty?: QuestionDifficulty; // Omitted for existing questions that have not been rated.
   explanation?: string; // optional explanation shown during reveal phase
 }
 
 export interface PlayerAnswer {
   answerIndex: number;    // 0–3 which option they chose
   answeredAt: number;     // server timestamp when submitted
-  isCorrect: boolean;     // set by server/admin reveal
-  pointsEarned: number;   // set by server/admin reveal
+  isCorrect?: boolean;     // set by server/admin reveal
+  pointsEarned?: number;   // set by server/admin reveal
 }
 
 export interface Player {
@@ -49,6 +51,7 @@ export interface GameSession {
   questionDuration?: number;        // locked duration in seconds for the active question
   nextQuestionDuration?: number;    // configured duration in seconds for the next question
   players: Record<string, Player>;
+  removedPlayerIds?: Record<string, boolean>; // Lets a removed device show an explicit state.
   questions?: Question[];           // snapshot of question bank for this session
   createdAt: number;
   endedAt?: number;

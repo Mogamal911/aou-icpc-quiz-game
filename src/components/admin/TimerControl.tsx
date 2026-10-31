@@ -1,3 +1,4 @@
+import { Icon } from '../ui/Icon';
 import React, { useState, useEffect } from 'react';
 
 interface TimerControlProps {
@@ -51,7 +52,7 @@ export function TimerControl({
     <div className={`bg-[#070D1B]/90 border border-[#C8A752]/30 rounded-xl p-4 shadow-inner ${className}`}>
       <div className="flex items-center justify-between mb-2.5">
         <div className="flex items-center gap-2">
-          <span className="text-[#F0D278] text-sm">⏱</span>
+          <Icon name="clock" />
           <span className="text-white text-xs font-sans font-bold uppercase tracking-wider">
             {isQuestionActive ? 'Next Question Duration' : label}
           </span>
@@ -115,7 +116,7 @@ export function TimerControl({
                 if (e.key === 'Enter') handleCustomSubmit();
               }}
               placeholder="sec"
-              className="w-16 bg-[#081024] border border-[#F0D278] text-white text-xs px-2 py-1 rounded-lg text-center font-mono outline-none shadow-sm focus:ring-1 focus:ring-[#F0D278]"
+              className="w-16 bg-[#081024] border border-[#F0D278] text-white text-xs px-2 py-1 rounded-lg text-center font-mono outline-none shadow-sm focus:ring-1 focus:ring-[#94a3b8]"
               autoFocus
             />
             <button
